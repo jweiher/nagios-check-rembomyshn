@@ -1,0 +1,120 @@
+#!/usr/bin/python
+###########################################
+# Rembo Nagios Checks
+# Jan Weiher <jweiher@netcologne.de>, 2012
+###########################################
+
+from optparse import OptionParser
+from os import path, listdir, walk
+import csv
+
+REMBOPATH="/rembo/server/files/global/"
+
+OK=0
+WARNING=1
+CRITICAL=2
+UNKNOWN=3
+
+"""
+Ueberprueft die Rembo Lizenz bzw ob selbige ueberschritten wurde.
+Moegliche Ergebnisse: 	Alles ok (Rembo Lizenz wurde nicht ueberschritten)
+			Warnung (Rembo Lizenz wurde ueberschritten, aber nicht stark)
+			Critical (Rembo Lizenz wurde um mindestens 5% ueberschritten)
+"""
+def check_license():
+	# Pfade festlegen
+	hostlist = path.join(REMBOPATH,"myshn","cached","hostlist")
+	myshnkey = path.join(REMBOPATH,"myshn","myshn.key")
+	# Versuchen die Dateien zu oeffnen, wenn nicht geben wir Unknown als Status zurueck
+	try:
+		used_licenses = len(open(hostlist, 'r').readlines())
+		license = open(myshnkey,'r').readlines()
+	except IOError:
+		print "UNKNOWN: File not found"
+		exit(UNKNOWN)
+	# Aus der myshn-Lizenz ermitteln wieviele Clients lizensiert sind
+	for line in license:
+		if "Seats" in line:
+			available_licenses = int(" ".join(line.split()).split()[1])
+			break
+
+	# Jetzt ueberpruefen ob die Lizenz ueberschritten wurde und entsprechend antworten
+	# Zurzeit wird eine Warnung ausgegeben wenn die Lizenz ueberschritten wurde und ein Critical
+	# wenn die Lizenz um mehr als 5% ueberschritten wurde.
+	# TODO: Prozentangabe als Parameter uebergeben lassen, Default so festlegen, dass ein Critical nur ausgebene
+	# wird wenn Rembo beim Start diese Fehlermeldung ausspuckt
+	returncode = OK
+	returnmsg = "OK"
+	if used_licenses > available_licenses:
+		returncode = WARNING
+		returnmsg = "Warning: Mehr Lizenzen verwendet als vorhanden" 
+	if used_licenses > (available_licenses*1.05):
+		returncode = CRITICAL
+		returnmsg = "Critical: Lizenz um mehr als 5 Prozent ueberschritten"
+	returnmsg = returnmsg + " (vorhanden: %d, verwendet: %d)" % (available_licenses, used_licenses)
+	print returnmsg
+	exit(returncode)
+
+"""
+Ueberprueft auf doppelte IPs in der wimport_data
+Warum macht Rembo das nicht von sich aus?
+"""
+def check_duplicate_ips():
+	wimportdata = path.join(REMBOPATH,"wimport_data")
+	try:
+		wimportdata = csv.reader(open(wimportdata,'rb'),delimiter=";")
+	except IOError:
+		print "Unknown: Wimport_data IOError"
+		exit(UNKNOWN)
+	ips = []
+	for line in wimportdata:
+		# Wenn die Zeile beim aufteilen vom CSV nur ein Element hat, dann war dies keine "richtige" Zeile, sondern eine Kommentarzeile o.a.
+		#
+		if len(line) <= 1 or line[1].startswith("#"):
+			continue
+		ips.append(line[4])
+	ips.sort()
+	# Ueberpruefen ob IPs doppelt vorkommen.
+	# Trick: ein Set ist in Python eine Liste ohne Doubletten
+	# also ueberpruefe ich ob die Listen auch ohne Doubletten gleich lang sind...
+	if len(ips) != len(set(ips)):
+		print "Critical: Duplicate IPs found!"
+		exit(CRITICAL)
+	print "OK: No duplicate IPs found"
+	exit(OK)
+
+"""
+Da Einzelplatzimages bei uns unerwuenscht sind ueberpruefen wir, ob es welche gibt
+"""
+def check_single_host_image():
+	hostsdir = path.join(REMBOPATH,"myshn", "hosts")
+	for host in [x[0] for x in walk(hostsdir)]:
+		if "hdimages" in listdir(host):
+			print "Warning: Einzelplatzimage gefunden!"
+			exit(WARNING)	
+	print "OK: Keine Einzelplatzimages gefunden."
+	exit(OK)
+
+def main():
+	parser = OptionParser()
+	parser.add_option("--license",default=False, action="store_true", dest="check_license", help="Ueberpruefen, ob die Lizenz ueberschritten wurde")
+	parser.add_option("--duplicate-ips",default=False, action="store_true", dest="check_duplicate_ips", help="Ueberpruefen, ob doppelte IP-Adresse in der wimport_data enthalten sind")
+	parser.add_option("--single-host-image",default=False, action="store_true", dest="check_single_host_image", help="Ueberpruefen, ob Einzelplatzimages vorhanden sind")
+	(option, args) =  parser.parse_args()
+	selected = 0
+	for opt in [option.check_license, option.check_duplicate_ips, option.check_single_host_image]:
+		if opt == True:
+			selected +=1
+	if selected > 1: 
+		parser.error("Es kann nur ein Check ausgewaehlt werden!")
+	if option.check_duplicate_ips:
+		check_duplicate_ips()
+	elif option.check_license:
+		check_license()
+	elif option.check_single_host_image:
+		check_single_host_image()
+	else:	
+		parser.print_help()
+		exit(-1)
+if __name__ == "__main__":
+	main()
