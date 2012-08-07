@@ -70,7 +70,7 @@ def check_duplicate_ips():
 	for line in wimportdata:
 		# Wenn die Zeile beim aufteilen vom CSV nur ein Element hat, dann war dies keine "richtige" Zeile, sondern eine Kommentarzeile o.a.
 		#
-		if len(line) <= 1 or line[1].startswith("#"):
+		if len(line) <= 1 or line[0].startswith("#"):
 			continue
 		ips.append(line[4])
 	ips.sort()
